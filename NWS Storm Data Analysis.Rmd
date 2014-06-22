@@ -1,0 +1,67 @@
+Analysis of National Weather Storm Dataset
+========================================================
+Coursera - Reproducible Research: Peer Assessment Project #2
+
+## Synopsis
+
+## Data Processing
+
+Supporting documentation can be found here:
+- National Weather Service [Storm Data Documentation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf)
+- National Climatic Data Center Storm Events [FAQ](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2FNCDC%20Storm%20Events-FAQ%20Page.pdf)
+
+```{r}
+dataURL <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+dataBZ2 <- "StormData.csv.bz2"
+#uncomment the following lines to retrieve the data
+#download.file(dataURL, dataBZ2 )   #47MB
+```
+
+```{r}
+SE <- read.csv(bzfile(dataBZ2)) #Storm Events
+```
+SE.casualty <- SE[SE$FATALITIES > 0 | SE$INJURIES > 0,]
+SE.casualty$BGN_DATE <- as.Date(SE.casualty$BGN_DATE, "%m/%d/%Y")
+SE.casualty$year <- as.POSIXlt(SE.casualty$BGN_DATE)$year +1900
+
+library(lattice)
+xyplot(FATALITIES ~ year, data=SE.casualty)
+xyplot(FATALITIES ~ year | Event, data=SE.casualty)
+library(plyr)
+CbyEV <- ddply(SE.casualty,"EVTYPE", summarize,
+             Fatalities=sum(FATALITIES,na.rm=TRUE ), 
+             Injuries=sum(INJURIES, na.rm=TRUE))
+CbyEV$Casualties <- CbyEV$Fatalities + CbyEV$Injuries
+
+groupEvents <- function(df) {
+  Event = as.numeric(nrow(df))                        #add event groups
+  for (i in 1:nrow(df)) {
+   if (grepl("TORN", df$EVTYPE[i], ignore.case=TRUE)) {
+      Event[i] = "Tornado Related"
+   } else if (grepl("COLD",  df$EVTYPE[i], ignore.case=TRUE)
+           |  grepl("SNOW",  df$EVTYPE[i], ignore.case=TRUE) 
+           |  grepl("ICE",   df$EVTYPE[i], ignore.case=TRUE) 
+           |  grepl("FREEZ",   df$EVTYPE[i], ignore.case=TRUE) 
+           |  grepl("WINTE",   df$EVTYPE[i], ignore.case=TRUE) 
+           |  grepl("BLIZZ", df$EVTYPE[i], ignore.case=TRUE)) {
+      Event[i] = "Cold Related"
+   } else if (grepl("HEAT",  df$EVTYPE[i], ignore.case=TRUE)
+           |  grepl("WARM",  df$EVTYPE[i], ignore.case=TRUE)) {
+      Event[i] = "Heat Related"
+   } else if (grepl("Flood",  df$EVTYPE[i], ignore.case=TRUE)) {
+      Event[i] = "Flood Related"
+   } else if (grepl("Thund",  df$EVTYPE[i], ignore.case=TRUE)) {
+      Event[i] = "Thunderstorm Related"
+   } else  {
+      Event[i] = "Other"
+   }
+  }
+}
+
+for( iEV in sort(unique(CbyEV$Event))) {
+   cat (iEV, ":\n")
+   cat ( paste(sort(unique( as.character(CbyEV$EVTYPE[CbyEV$Event==iEV]))), sep=", "), "\n"  )
+}
+
+CbyEvent <- ddply(CbyEV,"Event", summarize, Fatalities=sum(Fatalities, na.rm=TRUE ))
+FbyEvent
