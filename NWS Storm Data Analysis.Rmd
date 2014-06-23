@@ -2,7 +2,14 @@ Analysis of National Weather Storm Dataset
 ========================================================
 Coursera - Reproducible Research: Peer Assessment Project #2
 
+```{r setoptions, echo=TRUE}
+opts_chunk$set(echo=TRUE, results="show")
+library(plyr)
+library(lattice)
+```
 ## Synopsis
+
+An analysis of weather event data from the NWS.  The analysis includes a data preparation phase where events are categorized by event type (tornado, flood, etc.), whether financial damages or events resulting in human casualties.  The analysis finds that tornadoes are the most severe weather event in terms of overall victims, and large tornado events cause the most overall damage.  By contrast, the bulk of financial damage is incurred during relatively smaller events.
 
 ## Data Processing
 
@@ -10,28 +17,17 @@ Supporting documentation can be found here:
 - National Weather Service [Storm Data Documentation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf)
 - National Climatic Data Center Storm Events [FAQ](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2FNCDC%20Storm%20Events-FAQ%20Page.pdf)
 
-```{r}
+```{r read_data, cache=TRUE}
 dataURL <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
 dataBZ2 <- "StormData.csv.bz2"
 #uncomment the following lines to retrieve the data
 #download.file(dataURL, dataBZ2 )   #47MB
-```
 
-```{r}
 SE <- read.csv(bzfile(dataBZ2)) #Storm Events
 ```
-SE.casualty <- SE[SE$FATALITIES > 0 | SE$INJURIES > 0,]
-SE.casualty$BGN_DATE <- as.Date(SE.casualty$BGN_DATE, "%m/%d/%Y")
-SE.casualty$year <- as.POSIXlt(SE.casualty$BGN_DATE)$year +1900
 
-library(lattice)
-xyplot(FATALITIES ~ year, data=SE.casualty)
-xyplot(FATALITIES ~ year | Event, data=SE.casualty)
-library(plyr)
-CbyEV <- ddply(SE.casualty,"EVTYPE", summarize,
-             Fatalities=sum(FATALITIES,na.rm=TRUE ), 
-             Injuries=sum(INJURIES, na.rm=TRUE))
-CbyEV$Casualties <- CbyEV$Fatalities + CbyEV$Injuries
+```{r data_group, cache=TRUE}
+SE.casualty <- SE[SE$FATALITIES > 0 | SE$INJURIES > 0,]
 
 groupEvents <- function(df) {
   Event = as.numeric(nrow(df))                        #add event groups
@@ -43,12 +39,14 @@ groupEvents <- function(df) {
            |  grepl("ICE",   df$EVTYPE[i], ignore.case=TRUE) 
            |  grepl("FREEZ",   df$EVTYPE[i], ignore.case=TRUE) 
            |  grepl("WINTE",   df$EVTYPE[i], ignore.case=TRUE) 
+           |  grepl("CHILL",   df$EVTYPE[i], ignore.case=TRUE) 
            |  grepl("BLIZZ", df$EVTYPE[i], ignore.case=TRUE)) {
       Event[i] = "Cold Related"
    } else if (grepl("HEAT",  df$EVTYPE[i], ignore.case=TRUE)
            |  grepl("WARM",  df$EVTYPE[i], ignore.case=TRUE)) {
       Event[i] = "Heat Related"
-   } else if (grepl("Flood",  df$EVTYPE[i], ignore.case=TRUE)) {
+   } else if (grepl("FLOOD",       df$EVTYPE[i], ignore.case=TRUE)
+           |  grepl("STREAM FLD",  df$EVTYPE[i], ignore.case=TRUE)) {
       Event[i] = "Flood Related"
    } else if (grepl("Thund",  df$EVTYPE[i], ignore.case=TRUE)) {
       Event[i] = "Thunderstorm Related"
@@ -56,12 +54,99 @@ groupEvents <- function(df) {
       Event[i] = "Other"
    }
   }
+  Event
 }
 
-for( iEV in sort(unique(CbyEV$Event))) {
-   cat (iEV, ":\n")
-   cat ( paste(sort(unique( as.character(CbyEV$EVTYPE[CbyEV$Event==iEV]))), sep=", "), "\n"  )
-}
+```{r data_prep, cache=TRUE}
+SE.casualty$BGN_DATE <- as.Date(SE.casualty$BGN_DATE, "%m/%d/%Y")
+SE.casualty$year <- as.POSIXlt(SE.casualty$BGN_DATE)$year +1900
+SE.casualty$total <- SE.casualty$FATALITIES + SE.casualty$INJURIES
 
-CbyEvent <- ddply(CbyEV,"Event", summarize, Fatalities=sum(Fatalities, na.rm=TRUE ))
-FbyEvent
+total.cas = sum(SE.casualty$total)
+total.cas.eq1 = sum(SE.casualty$total[SE.casualty$total == 1])
+year0 = min(SE.casualty$year)
+yearN = max(SE.casualty$year)
+years = sprintf("%d-%d", year0, yearN)
+
+SE.casualty$Event <- groupEvents(SE.casualty)
+nEVTYPE = length(unique(SE.casualty$EVTYPE))
+nEVgrps = length(unique(SE.casualty$Event))
+
+```
+There are `r nEVTYPE` events listed in the NWS dataset that produced at least one casualty (fatality or injury) during the years `r years`.  Since there is much overlap, the events have been consolidated into `r nEVgrps` groups.  These are shown below with the earliest year (minYear) with an event recoding a casualty 
+```{r minYear}
+grpMinYear <- ddply(SE.casualty, "Event", summarize, minYear=min(year))
+grpMinYear
+```
+## Results
+```{r analyze}
+SE.casualty$sev = cut(SE.casualty$total, breaks=c(0,1,10,100,max(SE.casualty$total)) 
+                   ,right=TRUE, inlude.highest=TRUE
+                   ,labels = c("1", "2-10", "11-100", ">100"))
+
+casBySev <- xtabs(total ~ sev, SE.casualty)
+casByPct <- round(casBySev/total.cas, 3)*100
+
+```
+
+There were `r nrow(SE.casualty)` events from `r years` with casualties with a total of `r sprintf("%d",total.cas)` victims.
+  `r round(total.cas.eq1/total.cas,3)*100`% events involving only one person.
+
+The data shows that the majority of events include a small number of victims, however in order to maximize the efficacy of prevention policies, we need to consider the overall number of victims per event.  Would affecting  a smaller number of events with a high victim counts be an effective way to save lives?  The chart below indicates it would, as the events with over 100 victims account for `r casByPct[4]`% of all casualty victims.  
+```{r SeverityChart, fig.width=10, fig.height=4}
+sevbar <- barchart(xtabs(total ~ sev, SE.casualty))
+sevbar$main <- "Total Number of Victims by Severity of Event"
+sevbar$ylab <- "#Victims per Event (Severity)"
+sevbar$xlab <- "Number of Victims"
+sevbar
+```
+  
+Based on this, we should concentrate on the types of events that most commonly cause casualty counts above 100.  The chart below shows that tornado related events vastly outnumber the other types of events at this severity level.
+  
+```{r EventChart, fig.width=10, fig.height=4}
+cntEvent <- as.data.frame(with(SE.casualty, table(Event,sev)))
+typebar <- barchart( Freq ~ Event , cntEvent[cntEvent$sev==">100",])
+typebar$ylab <- "Number of Events"
+typebar$main <- "Tornadoes Dominate Events with >100 Casualties"
+typebar
+```
+
+```{r data_prop, cache=TRUE}
+SE.fin <- SE[SE$CROPDMG > 0 | SE$PROPDMG > 0,]
+
+SE.fin$BGN_DATE <- as.Date(SE.fin$BGN_DATE, "%m/%d/%Y")
+SE.fin$year <- as.POSIXlt(SE.fin$BGN_DATE)$year +1900
+SE.fin$total <- SE.fin$CROPDMG + SE.fin$PROPDMG
+
+total.fin = sum(SE.fin$total)
+year0 = min(SE.fin$year)
+yearN = max(SE.fin$year)
+years = sprintf("%d-%d", year0, yearN)
+
+#SE.fin$Event <- groupEvents(SE.fin)
+nfEVTYPE = length(unique(SE.fin$EVTYPE))
+#nfEVgrps = length(unique(SE.casualty$Event))
+
+```
+There are `r nfEVTYPE` events listed in the NWS dataset that produced at least one financial effect (property or crop damage) during the years `r years`.
+
+```{r analyze_prop}
+SE.fin$sev = cut(SE.fin$total, breaks=c(0,100,1000,max(SE.fin$total)) 
+                   ,right=FALSE, inlude.lowest=TRUE
+                   ,labels = c("<100", "100-1000", ">1000"))
+
+finBySev <- xtabs(total ~ sev, SE.fin)
+finByPct <- round(finBySev/total.fin, 3)*100
+
+```
+
+There were `r nrow(SE.fin)` events from `r years`  with a total of `r sprintf("$%4.1fB",total.fin/1000000)` damage.  
+
+In contrast to human costs, the bulk of weather related financial costs occurs in the form of smaller events.  This leads us to conclude that claims processing and re-insurance may be more effective than prevention for minimizing the economic impact of weather events.  
+```{r SevFinChart, fig.width=10, fig.height=4}
+sevfin <- barchart(xtabs(total ~ sev, SE.fin))
+sevfin$main <- "Total Financial Damage Severity of Event"
+sevfin$ylab <- "$ Damage per Event (Severity)"
+sevfin$xlab <- "$ Financial Damage"
+sevfin
+```

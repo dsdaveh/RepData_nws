@@ -2,7 +2,22 @@ Analysis of National Weather Storm Dataset
 ========================================================
 Coursera - Reproducible Research: Peer Assessment Project #2
 
+
+```r
+opts_chunk$set(echo=TRUE, results="show")
+library(plyr)
+```
+
+```
+## Warning: package 'plyr' was built under R version 3.0.3
+```
+
+```r
+library(lattice)
+```
 ## Synopsis
+
+An analysis of weather event data from the NWS.  The analysis includes a data preparation phase where events are categorized by event type (tornado, flood, etc.), whether financial damages or events resulting in human casualties.  The analysis finds that tornadoes are the most severe weather event in terms of overall victims, and large tornado events cause the most overall damage.  By contrast, the bulk of financial damage is incurred during relatively smaller events.
 
 ## Data Processing
 
@@ -11,4 +26,157 @@ Supporting documentation can be found here:
 - National Climatic Data Center Storm Events [FAQ](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2FNCDC%20Storm%20Events-FAQ%20Page.pdf)
 
 
+```r
+dataURL <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+dataBZ2 <- "StormData.csv.bz2"
+#uncomment the following lines to retrieve the data
+#download.file(dataURL, dataBZ2 )   #47MB
 
+SE <- read.csv(bzfile(dataBZ2)) #Storm Events
+```
+
+
+```r
+SE.casualty <- SE[SE$FATALITIES > 0 | SE$INJURIES > 0,]
+
+groupEvents <- function(df) {
+  Event = as.numeric(nrow(df))                        #add event groups
+  for (i in 1:nrow(df)) {
+   if (grepl("TORN", df$EVTYPE[i], ignore.case=TRUE)) {
+      Event[i] = "Tornado Related"
+   } else if (grepl("COLD",  df$EVTYPE[i], ignore.case=TRUE)
+           |  grepl("SNOW",  df$EVTYPE[i], ignore.case=TRUE) 
+           |  grepl("ICE",   df$EVTYPE[i], ignore.case=TRUE) 
+           |  grepl("FREEZ",   df$EVTYPE[i], ignore.case=TRUE) 
+           |  grepl("WINTE",   df$EVTYPE[i], ignore.case=TRUE) 
+           |  grepl("CHILL",   df$EVTYPE[i], ignore.case=TRUE) 
+           |  grepl("BLIZZ", df$EVTYPE[i], ignore.case=TRUE)) {
+      Event[i] = "Cold Related"
+   } else if (grepl("HEAT",  df$EVTYPE[i], ignore.case=TRUE)
+           |  grepl("WARM",  df$EVTYPE[i], ignore.case=TRUE)) {
+      Event[i] = "Heat Related"
+   } else if (grepl("FLOOD",       df$EVTYPE[i], ignore.case=TRUE)
+           |  grepl("STREAM FLD",  df$EVTYPE[i], ignore.case=TRUE)) {
+      Event[i] = "Flood Related"
+   } else if (grepl("Thund",  df$EVTYPE[i], ignore.case=TRUE)) {
+      Event[i] = "Thunderstorm Related"
+   } else  {
+      Event[i] = "Other"
+   }
+  }
+  Event
+}
+```
+
+```r
+SE.casualty$BGN_DATE <- as.Date(SE.casualty$BGN_DATE, "%m/%d/%Y")
+SE.casualty$year <- as.POSIXlt(SE.casualty$BGN_DATE)$year +1900
+SE.casualty$total <- SE.casualty$FATALITIES + SE.casualty$INJURIES
+
+total.cas = sum(SE.casualty$total)
+total.cas.eq1 = sum(SE.casualty$total[SE.casualty$total == 1])
+year0 = min(SE.casualty$year)
+yearN = max(SE.casualty$year)
+years = sprintf("%d-%d", year0, yearN)
+
+SE.casualty$Event <- groupEvents(SE.casualty)
+nEVTYPE = length(unique(SE.casualty$EVTYPE))
+nEVgrps = length(unique(SE.casualty$Event))
+```
+There are 220 events listed in the NWS dataset that produced at least one casualty (fatality or injury) during the years 1950-2011.  Since there is much overlap, the events have been consolidated into 6 groups.  These are shown below with the earliest year (minYear) with an event recoding a casualty 
+
+```r
+grpMinYear <- ddply(SE.casualty, "Event", summarize, minYear=min(year))
+grpMinYear
+```
+
+```
+##                  Event minYear
+## 1         Cold Related    1993
+## 2        Flood Related    1993
+## 3         Heat Related    1993
+## 4                Other    1983
+## 5 Thunderstorm Related    1993
+## 6      Tornado Related    1950
+```
+## Results
+
+```r
+SE.casualty$sev = cut(SE.casualty$total, breaks=c(0,1,10,100,max(SE.casualty$total)) 
+                   ,right=TRUE, inlude.highest=TRUE
+                   ,labels = c("1", "2-10", "11-100", ">100"))
+
+casBySev <- xtabs(total ~ sev, SE.casualty)
+casByPct <- round(casBySev/total.cas, 3)*100
+```
+
+There were 21929 events from 1950-2011 with casualties with a total of 155673 victims.
+  6.8% events involving only one person.
+
+The data shows that the majority of events include a small number of victims, however in order to maximize the efficacy of prevention policies, we need to consider the overall number of victims per event.  Would affecting  a smaller number of events with a high victim counts be an effective way to save lives?  The chart below indicates it would, as the events with over 100 victims account for 36.9% of all casualty victims.  
+
+```r
+sevbar <- barchart(xtabs(total ~ sev, SE.casualty))
+sevbar$main <- "Total Number of Victims by Severity of Event"
+sevbar$ylab <- "#Victims per Event (Severity)"
+sevbar$xlab <- "Number of Victims"
+sevbar
+```
+
+![plot of chunk SeverityChart](figure/SeverityChart.png) 
+  
+Based on this, we should concentrate on the types of events that most commonly cause casualty counts above 100.  The chart below shows that tornado related events vastly outnumber the other types of events at this severity level.
+  
+
+```r
+cntEvent <- as.data.frame(with(SE.casualty, table(Event,sev)))
+typebar <- barchart( Freq ~ Event , cntEvent[cntEvent$sev==">100",])
+typebar$ylab <- "Number of Events"
+typebar$main <- "Tornadoes Dominate Events with >100 Casualties"
+typebar
+```
+
+![plot of chunk EventChart](figure/EventChart.png) 
+
+
+```r
+SE.fin <- SE[SE$CROPDMG > 0 | SE$PROPDMG > 0,]
+
+SE.fin$BGN_DATE <- as.Date(SE.fin$BGN_DATE, "%m/%d/%Y")
+SE.fin$year <- as.POSIXlt(SE.fin$BGN_DATE)$year +1900
+SE.fin$total <- SE.fin$CROPDMG + SE.fin$PROPDMG
+
+total.fin = sum(SE.fin$total)
+year0 = min(SE.fin$year)
+yearN = max(SE.fin$year)
+years = sprintf("%d-%d", year0, yearN)
+
+#SE.fin$Event <- groupEvents(SE.fin)
+nfEVTYPE = length(unique(SE.fin$EVTYPE))
+#nfEVgrps = length(unique(SE.casualty$Event))
+```
+There are 431 events listed in the NWS dataset that produced at least one financial effect (property or crop damage) during the years 1950-2011.
+
+
+```r
+SE.fin$sev = cut(SE.fin$total, breaks=c(0,100,1000,max(SE.fin$total)) 
+                   ,right=FALSE, inlude.lowest=TRUE
+                   ,labels = c("<100", "100-1000", ">1000"))
+
+finBySev <- xtabs(total ~ sev, SE.fin)
+finByPct <- round(finBySev/total.fin, 3)*100
+```
+
+There were 245031 events from 1950-2011  with a total of $12.3B damage.  
+
+In contrast to human costs, the bulk of weather related financial costs occurs in the form of smaller events.  This leads us to conclude that claims processing and re-insurance may be more effective than prevention for minimizing the economic impact of weather events.  
+
+```r
+sevfin <- barchart(xtabs(total ~ sev, SE.fin))
+sevfin$main <- "Total Financial Damage Severity of Event"
+sevfin$ylab <- "$ Damage per Event (Severity)"
+sevfin$xlab <- "$ Financial Damage"
+sevfin
+```
+
+![plot of chunk SevFinChart](figure/SevFinChart.png) 
